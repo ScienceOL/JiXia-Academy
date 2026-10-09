@@ -1,570 +1,520 @@
-use std::{
-    env,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+mod agent;
+mod auth;
+mod case;
+mod config;
+mod db;
+mod error;
+mod logging;
+mod models;
+mod routes;
+mod state;
+mod storage;
+mod tools;
+mod util;
 
-use a3s_code_core::{
-    llm::{LlmClient, StreamEvent, ToolDefinition},
-    permissions::{PermissionDecision, PermissionPolicy},
-    Agent, AgentEvent, ContentBlock, LlmResponse, Message, PlanningMode, SessionOptions,
-    TokenUsage,
-};
-use anyhow::Result as AnyResult;
-use async_trait::async_trait;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
-};
-use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex};
-use tokio_util::sync::CancellationToken;
+use std::net::SocketAddr;
 
-const AGENT_ACL: &str = r#"
-default_model = "openai/offline-fixture"
-providers "openai" {
-  api_key = "local-only-fixture"
-  base_url = "http://127.0.0.1:9/v1"
-  models "offline-fixture" { name = "Offline Fixture" }
-}
-"#;
-
-#[derive(Clone, Serialize)]
-struct Stage {
-    id: &'static str,
-    index: usize,
-    title: &'static str,
-    eyebrow: &'static str,
-    summary: &'static str,
-    output: &'static str,
-    state: &'static str,
-}
-
-fn stages() -> Vec<Stage> {
-    [
-        (
-            "question",
-            "01",
-            "定义科学问题",
-            "RESEARCH BRIEF",
-            "围绕 AmeR 蛋白质研究目标，明确候选突变的功能假设与评价尺度。",
-            "问题定义 · 研究目标 · 约束条件",
-            "ready",
-        ),
-        (
-            "evidence",
-            "02",
-            "深度研究",
-            "EVIDENCE REVIEW",
-            "整理示意文献、作用机制线索、已有案例与待验证假设。",
-            "模拟文献集 · 证据摘要 · 未知项",
-            "ready",
-        ),
-        (
-            "route",
-            "03",
-            "专家选择路线",
-            "ROUTE SELECTION",
-            "比较候选策略的预期收益、实验成本和证据强度，形成可解释的路线建议。",
-            "路线对比 · 选择理由 · 评审记录",
-            "ready",
-        ),
-        (
-            "risk",
-            "04",
-            "风险评审",
-            "RISK REVIEW",
-            "审视表达、稳定性、测定偏差和资源约束，为下一步计算标记风险与缓解方式。",
-            "风险清单 · 影响等级 · 缓解措施",
-            "ready",
-        ),
-        (
-            "simulation",
-            "05",
-            "分子动力学模拟",
-            "MD SIMULATION",
-            "查看预置的示意稳定性曲线、构象指标和候选排序；此处不执行真实计算。",
-            "模拟轨迹 · 稳定性指标 · 候选排序",
-            "simulated",
-        ),
-        (
-            "evidence-chain",
-            "06",
-            "可信科研证据链",
-            "PROVENANCE",
-            "把问题、模拟工具输入、评审结论和产物连成可追溯的演示记录。",
-            "事件记录 · 产物索引 · 来源标签",
-            "simulated",
-        ),
-        (
-            "experiment",
-            "07",
-            "湿实验任务与监测",
-            "LAB TASK · MOCK",
-            "浏览虚构的实验任务和历史监测画面；没有实验室设备或控制接口连接。",
-            "模拟任务卡 · 只读状态 · 回放画面",
-            "simulated",
-        ),
-        (
-            "feedback",
-            "08",
-            "结果回流与迭代",
-            "ITERATION",
-            "将模拟实验结果回收到下一轮研究记录，呈现假设更新和迭代关系。",
-            "模拟结果 · 假设变化 · 下一轮建议",
-            "simulated",
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(
-        |(index, (id, _number, title, eyebrow, summary, output, state))| Stage {
-            id,
-            index,
-            title,
-            eyebrow,
-            summary,
-            output,
-            state,
-        },
-    )
-    .collect()
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct AuditEvent {
-    id: u64,
-    at: u64,
-    kind: String,
-    title: String,
-    detail: String,
-    stage: Option<usize>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct CaseProgress {
-    current_stage: usize,
-    completed: Vec<usize>,
-    finished: bool,
-    next_event_id: u64,
-    events: Vec<AuditEvent>,
-}
-
-impl Default for CaseProgress {
-    fn default() -> Self {
-        Self {
-            current_stage: 0,
-            completed: Vec::new(),
-            finished: false,
-            next_event_id: 2,
-            events: vec![AuditEvent {
-                id: 1,
-                at: now(),
-                kind: "case.created".into(),
-                title: "演示案例已载入".into(),
-                detail: "AmeR 蛋白质定向进化 · 全部科研数据为模拟内容".into(),
-                stage: Some(0),
-            }],
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct CaseResponse {
-    id: &'static str,
-    title: &'static str,
-    subtitle: &'static str,
-    data_label: &'static str,
-    current_stage: usize,
-    completed: Vec<usize>,
-    finished: bool,
-    stages: Vec<Stage>,
-    events: Vec<AuditEvent>,
-}
-
-struct AppState {
-    progress: Mutex<CaseProgress>,
-    progress_path: PathBuf,
-    agent_workspace: PathBuf,
-}
-
-impl AppState {
-    async fn open(root: PathBuf) -> std::io::Result<Self> {
-        let data_dir = root.join("data");
-        let agent_workspace = root.join(".runtime").join("agent-workspace");
-        tokio::fs::create_dir_all(&data_dir).await?;
-        tokio::fs::create_dir_all(&agent_workspace).await?;
-        let progress_path = data_dir.join("case-progress.json");
-        let progress = match tokio::fs::read(&progress_path).await {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => CaseProgress::default(),
-            Err(error) => return Err(error),
-        };
-        let state = Self {
-            progress: Mutex::new(progress),
-            progress_path,
-            agent_workspace,
-        };
-        {
-            let progress = state.progress.lock().await;
-            state.persist(&progress).await?;
-        }
-        Ok(state)
-    }
-
-    async fn persist(&self, progress: &CaseProgress) -> std::io::Result<()> {
-        let bytes = serde_json::to_vec_pretty(progress)?;
-        tokio::fs::write(&self.progress_path, bytes).await
-    }
-}
-
-#[derive(Debug)]
-struct ApiError(StatusCode, String);
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (self.0, Json(serde_json::json!({ "error": self.1 }))).into_response()
-    }
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-fn response(progress: &CaseProgress) -> CaseResponse {
-    CaseResponse {
-        id: "amer-protein-evolution",
-        title: "AmeR 蛋白质定向进化",
-        subtitle: "从科学假设到实验反馈的可追溯研究流程",
-        data_label: "演示数据 · 非真实研究结论",
-        current_stage: progress.current_stage,
-        completed: progress.completed.clone(),
-        finished: progress.finished,
-        stages: stages(),
-        events: progress.events.clone(),
-    }
-}
-
-async fn get_case(State(state): State<Arc<AppState>>) -> Json<CaseResponse> {
-    let progress = state.progress.lock().await;
-    Json(response(&progress))
-}
-
-async fn get_events(State(state): State<Arc<AppState>>) -> Json<Vec<AuditEvent>> {
-    Json(state.progress.lock().await.events.clone())
-}
-
-async fn advance_case(State(state): State<Arc<AppState>>) -> Result<Json<CaseResponse>, ApiError> {
-    let mut progress = state.progress.lock().await;
-    if progress.finished {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "案例全部阶段已完成，请重置后重新演示".into(),
-        ));
-    }
-
-    let current = progress.current_stage;
-    if !progress.completed.contains(&current) {
-        progress.completed.push(current);
-    }
-    if current + 1 == stages().len() {
-        progress.finished = true;
-    } else {
-        progress.current_stage += 1;
-    }
-    push_event(
-        &mut progress,
-        "stage.completed",
-        "阶段已完成",
-        &format!("{} · 已保存本地演示进度", stages()[current].title),
-        Some(current),
-    );
-    state.persist(&progress).await.map_err(internal_error)?;
-    Ok(Json(response(&progress)))
-}
-
-async fn reset_case(State(state): State<Arc<AppState>>) -> Result<Json<CaseResponse>, ApiError> {
-    let mut current = state.progress.lock().await;
-    let mut progress = CaseProgress::default();
-    push_event(
-        &mut progress,
-        "case.reset",
-        "演示已重置",
-        "已从问题定义阶段重新开始",
-        Some(0),
-    );
-    state.persist(&progress).await.map_err(internal_error)?;
-    let result = response(&progress);
-    *current = progress;
-    Ok(Json(result))
-}
-
-#[derive(Serialize)]
-struct AgentProbe {
-    runtime: &'static str,
-    version: &'static str,
-    command: &'static str,
-    model_source: &'static str,
-    events: Vec<String>,
-    output: String,
-    fixture_calls: usize,
-    tool_requests: usize,
-    tool_executions: usize,
-    network_used: bool,
-}
-
-const FIXTURE_RECOMMENDATION: &str = "本地固定响应模型建议：先完成小规模计算与文献复核，不直接指定可执行突变。请核验结合位点与保守性、表达/溶解性风险及测定条件；当前输入和建议均为模拟示例，不构成生物学结论。";
-
-#[derive(Clone, Default)]
-struct FixtureLlmClient {
-    calls: Arc<AtomicUsize>,
-}
-
-impl FixtureLlmClient {
-    fn response(&self) -> LlmResponse {
-        let text = FIXTURE_RECOMMENDATION.to_string();
-        LlmResponse {
-            message: Message {
-                role: "assistant".into(),
-                content: vec![ContentBlock::Text { text }],
-                reasoning_content: None,
-                transcript_text: None,
-                transcript_visibility: Default::default(),
-            },
-            usage: TokenUsage::default(),
-            stop_reason: Some("end_turn".into()),
-            token_logprobs: Vec::new(),
-            meta: None,
-        }
-    }
-}
-
-#[async_trait]
-impl LlmClient for FixtureLlmClient {
-    async fn complete(
-        &self,
-        _messages: &[Message],
-        _system: Option<&str>,
-        _tools: &[ToolDefinition],
-    ) -> AnyResult<LlmResponse> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        Ok(self.response())
-    }
-
-    async fn complete_streaming(
-        &self,
-        _messages: &[Message],
-        _system: Option<&str>,
-        _tools: &[ToolDefinition],
-        _cancel_token: CancellationToken,
-    ) -> AnyResult<mpsc::Receiver<StreamEvent>> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        let response = self.response();
-        let text = response.text();
-        let (sender, receiver) = mpsc::channel(8);
-        tokio::spawn(async move {
-            if !text.is_empty() {
-                let _ = sender.send(StreamEvent::TextDelta(text)).await;
-            }
-            let _ = sender.send(StreamEvent::Done(response)).await;
-        });
-        Ok(receiver)
-    }
-}
-
-async fn run_a3s_probe(workspace: &PathBuf) -> Result<AgentProbe, ApiError> {
-    let agent = Agent::new(AGENT_ACL)
-        .await
-        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    let fixture = FixtureLlmClient::default();
-    let options = SessionOptions::new()
-        .with_permission_policy(default_agent_permissions())
-        .with_planning_mode(PlanningMode::Disabled)
-        .with_llm_client(Arc::new(fixture.clone()));
-    let session = agent
-        .session_async(workspace.to_string_lossy().to_string(), Some(options))
-        .await
-        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    let (mut receiver, worker) = session
-        .stream(
-            "请针对 AmeR 蛋白质定向进化案例给出下一步路线建议，并说明风险边界。",
-            None,
-        )
-        .await
-        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-
-    let mut event_names = Vec::new();
-    let mut output = String::new();
-    let mut tool_requests = 0;
-    let mut tool_executions = 0;
-    let mut ended = false;
-    while let Some(event) = receiver.recv().await {
-        match event {
-            AgentEvent::TextDelta { text } => {
-                output.push_str(&text);
-                event_names.push("text_delta".to_string());
-            }
-            AgentEvent::End { .. } => {
-                ended = true;
-                event_names.push("agent_end".to_string());
-            }
-            AgentEvent::ToolStart { .. } => {
-                tool_requests += 1;
-                event_names.push("tool_start".to_string());
-            }
-            AgentEvent::ToolExecutionStart { .. } => {
-                tool_executions += 1;
-                event_names.push("tool_execution_start".to_string());
-            }
-            AgentEvent::Error { message } => {
-                return Err(ApiError(StatusCode::BAD_GATEWAY, message));
-            }
-            _ => event_names.push("runtime_event".to_string()),
-        }
-    }
-    worker
-        .await
-        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    let fixture_calls = fixture.calls.load(Ordering::Relaxed);
-    if !ended || output.trim().is_empty() || fixture_calls == 0 {
-        return Err(ApiError(
-            StatusCode::BAD_GATEWAY,
-            "A3S 未完成本地固定响应模型会话".into(),
-        ));
-    }
-
-    Ok(AgentProbe {
-        runtime: "A3S Code Core",
-        version: "9.1.1",
-        command: "AmeR 路线建议（模拟输入）",
-        model_source: "本地固定响应模型 · 非 AI 推理",
-        events: event_names,
-        output,
-        fixture_calls,
-        tool_requests,
-        tool_executions,
-        network_used: false,
-    })
-}
-
-fn default_agent_permissions() -> PermissionPolicy {
-    let mut permissions = PermissionPolicy::new();
-    permissions.default_decision = PermissionDecision::Deny;
-    permissions
-}
-
-async fn a3s_probe(State(state): State<Arc<AppState>>) -> Result<Json<AgentProbe>, ApiError> {
-    let probe = run_a3s_probe(&state.agent_workspace).await?;
-    let mut progress = state.progress.lock().await;
-    let detail = format!(
-        "{} · 本地固定响应模型调用 {} 次 · {} 个事件 · 未访问外网",
-        probe.runtime,
-        probe.fixture_calls,
-        probe.events.len()
-    );
-    push_event(
-        &mut progress,
-        "a3s.fixture_session",
-        "A3S 本地模拟模型链路验证",
-        &detail,
-        None,
-    );
-    state.persist(&progress).await.map_err(internal_error)?;
-    Ok(Json(probe))
-}
-
-fn push_event(
-    progress: &mut CaseProgress,
-    kind: &str,
-    title: &str,
-    detail: &str,
-    stage: Option<usize>,
-) {
-    let id = progress.next_event_id;
-    progress.next_event_id += 1;
-    progress.events.push(AuditEvent {
-        id,
-        at: now(),
-        kind: kind.into(),
-        title: title.into(),
-        detail: detail.into(),
-        stage,
-    });
-}
-
-fn internal_error(error: std::io::Error) -> ApiError {
-    ApiError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("无法保存本地演示状态：{error}"),
-    )
-}
-
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "ok",
-        "product": "Fieldnote Research Studio",
-        "data": "simulated"
-    }))
-}
-
-fn app(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/api/health", get(health))
-        .route("/api/case", get(get_case))
-        .route("/api/events", get(get_events))
-        .route("/api/case/advance", post(advance_case))
-        .route("/api/case/reset", post(reset_case))
-        .route("/api/agent/probe", post(a3s_probe))
-        .with_state(state)
-}
+use config::AppConfig;
+use state::AppState;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let root = env::current_dir()?;
-    let root = env::var_os("FIELDNOTE_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or(root);
-    let state = Arc::new(AppState::open(root).await?);
-    let address = SocketAddr::from(([127, 0, 0, 1], 8081));
+    let config = AppConfig::from_env();
+    let port = config.port;
+    let state = AppState::open(config).await?;
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(address).await?;
+    state.logger.info(
+        "server.started",
+        "Fieldnote API 已启动",
+        serde_json::json!({ "address": address.to_string() }),
+    );
     println!("Fieldnote API listening at http://{address}");
-    axum::serve(listener, app(state)).await
+    axum::serve(listener, routes::router(state)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn case_progress_persists_and_resumes() {
-        let root = tempfile::tempdir().unwrap();
-        let state = AppState::open(root.path().to_path_buf()).await.unwrap();
-        {
-            let mut progress = state.progress.lock().await;
-            progress.completed.push(0);
-            progress.current_stage = 1;
-            push_event(
-                &mut progress,
-                "stage.completed",
-                "阶段已完成",
-                "问题定义",
-                Some(0),
-            );
-            state.persist(&progress).await.unwrap();
+    use std::sync::Arc;
+
+    use axum::{
+        body::Body,
+        http::{header, Method, Request, StatusCode},
+        Router,
+    };
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    use crate::{
+        agent::{default_agent_permissions, run_a3s_probe, FIXTURE_RECOMMENDATION},
+        case::push_event,
+    };
+
+    const BOUNDARY: &str = "FIELDNOTE-TEST-BOUNDARY-0001";
+
+    struct TestApp {
+        _dir: tempfile::TempDir,
+        state: Arc<AppState>,
+        app: Router,
+    }
+
+    impl TestApp {
+        async fn new() -> Self {
+            Self::with_max_upload(20 * 1024 * 1024).await
         }
 
-        let reopened = AppState::open(root.path().to_path_buf()).await.unwrap();
-        let progress = reopened.progress.lock().await;
+        async fn with_max_upload(max_upload_bytes: usize) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let mut config = AppConfig::for_root(dir.path().to_path_buf());
+            config.max_upload_bytes = max_upload_bytes;
+            let state = AppState::open(config).await.unwrap();
+            let app = routes::router(state.clone());
+            Self {
+                _dir: dir,
+                state,
+                app,
+            }
+        }
+    }
+
+    async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .unwrap();
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+        };
+        (status, value)
+    }
+
+    fn json_req(method: Method, uri: &str, token: Option<&str>, body: Value) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body.to_string())).unwrap()
+    }
+
+    fn multipart_req(uri: &str, token: &str, file_name: &str, content: &[u8]) -> Request<Body> {
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            )
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    async fn register(app: &Router, email: &str, password: &str) -> String {
+        let request = json_req(
+            Method::POST,
+            "/api/auth/register",
+            None,
+            json!({ "email": email, "display_name": "测试用户", "password": password }),
+        );
+        let (status, value) = send(app, request).await;
+        assert_eq!(status, StatusCode::CREATED, "注册失败：{value}");
+        value["token"].as_str().unwrap().to_string()
+    }
+
+    async fn create_subject(app: &Router, token: &str, name: &str) -> i64 {
+        let request = json_req(
+            Method::POST,
+            "/api/subjects",
+            Some(token),
+            json!({ "name": name, "field": "蛋白质工程", "description": "演示课题" }),
+        );
+        let (status, value) = send(app, request).await;
+        assert_eq!(status, StatusCode::CREATED, "创建课题失败：{value}");
+        value["id"].as_i64().unwrap()
+    }
+
+    async fn create_conversation(app: &Router, token: &str, subject_id: i64) -> i64 {
+        let request = json_req(
+            Method::POST,
+            "/api/conversations",
+            Some(token),
+            json!({ "subject_id": subject_id, "mode": "quick" }),
+        );
+        let (status, value) = send(app, request).await;
+        assert_eq!(status, StatusCode::CREATED, "创建对话失败：{value}");
+        value["id"].as_i64().unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // 迁移
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn migrations_apply_once_and_are_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+
+        let state = AppState::open(AppConfig::for_root(root.clone())).await.unwrap();
+        let expected = db::migration_count() as i64;
+        assert!(expected >= 1);
+        assert_eq!(state.db.schema_version().unwrap(), expected);
+        drop(state);
+
+        let reopened = AppState::open(AppConfig::for_root(root)).await.unwrap();
+        assert_eq!(reopened.db.schema_version().unwrap(), expected);
+        // 第二次启动不应再应用任何迁移。
+        assert_eq!(reopened.db.migrate().unwrap(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 认证
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn register_login_me_and_logout_flow() {
+        let test = TestApp::new().await;
+        let token = register(&test.app, "Alice@Example.com", "password123").await;
+
+        // /me 使用注册返回的令牌可用。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/auth/me", Some(&token), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["email"], "alice@example.com");
+
+        // 无令牌 401。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, "/api/auth/me", None, Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // 重复邮箱注册冲突。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/auth/register",
+                None,
+                json!({ "email": "alice@example.com", "display_name": "重复", "password": "password123" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // 错误密码登录失败。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/auth/login",
+                None,
+                json!({ "email": "alice@example.com", "password": "wrong-password" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // 正确密码登录成功。
+        let (status, value) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/auth/login",
+                None,
+                json!({ "email": "alice@example.com", "password": "password123" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let login_token = value["token"].as_str().unwrap().to_string();
+
+        // 注销后令牌失效。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, "/api/auth/logout", Some(&login_token), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, "/api/auth/me", Some(&login_token), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // 注册时的令牌仍独立有效。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, "/api/auth/me", Some(&token), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn invalid_registration_is_rejected() {
+        let test = TestApp::new().await;
+        // 密码过短。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/auth/register",
+                None,
+                json!({ "email": "bob@example.com", "display_name": "Bob", "password": "short" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 邮箱格式不正确。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/auth/register",
+                None,
+                json!({ "email": "not-an-email", "display_name": "Bob", "password": "password123" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // -----------------------------------------------------------------------
+    // 归属隔离
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn subjects_are_isolated_by_owner() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let bob = register(&test.app, "bob@example.com", "password123").await;
+
+        let subject_id = create_subject(&test.app, &alice, "AmeR 定向进化").await;
+
+        // Alice 列表可见，Bob 列表为空。
+        let (_, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/subjects", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(value.as_array().unwrap().len(), 1);
+
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/subjects", Some(&bob), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(value.as_array().unwrap().is_empty());
+
+        // Bob 读取/修改/删除 Alice 的课题一律 404。
+        let uri = format!("/api/subjects/{subject_id}");
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, &uri, Some(&bob), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::PATCH,
+                &uri,
+                Some(&bob),
+                json!({ "name": "越权修改", "field": "", "description": "" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::DELETE, &uri, Some(&bob), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Alice 可正常读取。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, &uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["name"], "AmeR 定向进化");
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_subject_access_is_rejected() {
+        let test = TestApp::new().await;
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, "/api/subjects", None, Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // -----------------------------------------------------------------------
+    // 上传
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn upload_stores_file_with_hash_and_isolated_name() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "知识库课题").await;
+
+        let content = b"# AmeR notes\r\nsimulated content".to_vec();
+        let uri = format!("/api/subjects/{subject_id}/documents");
+        let (status, value) = send(
+            &test.app,
+            multipart_req(&uri, &alice, "notes.md", &content),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "上传失败：{value}");
+        assert_eq!(value["original_name"], "notes.md");
+        assert_eq!(value["byte_size"], content.len() as i64);
+        assert_eq!(value["sha256"], util::sha256_hex(&content));
+
+        // 磁盘文件名由服务端生成，且确实存在。
+        let document_id = value["id"].as_i64().unwrap();
+        let stored_name: String = test
+            .state
+            .db
+            .with(|conn| {
+                conn.query_row(
+                    "SELECT stored_name FROM documents WHERE id = ?1",
+                    rusqlite::params![document_id],
+                    |row| row.get(0),
+                )
+            })
+            .unwrap();
+        assert!(!stored_name.contains("notes"));
+        let path = storage::subject_dir(&test.state.config.uploads_dir, subject_id).join(&stored_name);
+        let stored = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(stored, content);
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_bad_extension_and_path_traversal() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "知识库课题").await;
+        let uri = format!("/api/subjects/{subject_id}/documents");
+
+        // 非白名单扩展名。
+        let (status, _) = send(
+            &test.app,
+            multipart_req(&uri, &alice, "payload.exe", b"binary"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 路径穿越文件名。
+        let (status, _) = send(
+            &test.app,
+            multipart_req(&uri, &alice, "../escape.md", b"escape"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_oversized_payload() {
+        let test = TestApp::with_max_upload(64 * 1024).await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "大文件课题").await;
+        let uri = format!("/api/subjects/{subject_id}/documents");
+
+        let big = vec![b'a'; 128 * 1024];
+        let (status, _) = send(&test.app, multipart_req(&uri, &alice, "big.txt", &big)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // -----------------------------------------------------------------------
+    // 备份
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn backup_requires_auth_and_can_be_reopened() {
+        let test = TestApp::new().await;
+
+        // 未认证 401。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, "/api/admin/backup", None, Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let token = register(&test.app, "alice@example.com", "password123").await;
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::POST, "/api/admin/backup", Some(&token), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "备份失败：{value}");
+        let file = value["file"].as_str().unwrap().to_string();
+        assert!(file.starts_with("backups/"));
+
+        let path = test.state.config.data_dir.join(&file);
+        let bytes = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(value["sha256"], util::sha256_hex(&bytes));
+        assert_eq!(value["byte_size"], bytes.len() as u64);
+
+        // 用备份文件重新打开，schema 与数据一致。
+        let reopened = db::Db::open(&path).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), db::migration_count() as i64);
+        let users: i64 = reopened
+            .with(|conn| conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)))
+            .unwrap();
+        assert_eq!(users, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // 既有阶段 A 行为回归
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn case_progress_persists_and_resumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let state = AppState::open(AppConfig::for_root(root.clone())).await.unwrap();
+        {
+            let mut progress = state.case.lock().await;
+            progress.completed.push(0);
+            progress.current_stage = 1;
+            push_event(&mut progress, "stage.completed", "阶段已完成", "问题定义", Some(0));
+            state.persist_case(&progress).await.unwrap();
+        }
+
+        let reopened = AppState::open(AppConfig::for_root(root)).await.unwrap();
+        let progress = reopened.case.lock().await;
         assert_eq!(progress.current_stage, 1);
         assert_eq!(progress.completed, vec![0]);
         assert!(progress
@@ -575,8 +525,8 @@ mod tests {
 
     #[tokio::test]
     async fn a3s_session_calls_local_fixture_and_emits_stream_events() {
-        let root = tempfile::tempdir().unwrap();
-        let workspace = root.path().join("agent-workspace");
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("agent-workspace");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
         let probe = run_a3s_probe(&workspace).await.unwrap();
         assert_eq!(probe.runtime, "A3S Code Core");
@@ -597,10 +547,273 @@ mod tests {
         let policy = default_agent_permissions();
         for tool in ["shell", "write_file", "web_search", "hardware_control"] {
             assert_eq!(
-                policy.check(tool, &serde_json::json!({})),
-                PermissionDecision::Deny,
-                "{tool} should be denied by the default policy"
+                policy.check(tool, &json!({})),
+                a3s_code_core::permissions::PermissionDecision::Deny,
+                "{tool} 应被默认策略拒绝"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 阶段 E：对话与课题空间
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn conversation_flow_persists_messages_and_simulated_reply() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "AmeR 定向进化").await;
+        let conversation_id = create_conversation(&test.app, &alice, subject_id).await;
+
+        // 发送消息 → 返回用户消息与本地模拟回复。
+        let uri = format!("/api/conversations/{conversation_id}/messages");
+        let (status, value) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                &uri,
+                Some(&alice),
+                json!({ "content": "请给出 AmeR 定向进化的下一步建议" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "发送消息失败：{value}");
+        assert_eq!(value["user_message"]["role"], "user");
+        assert_eq!(value["assistant_message"]["role"], "assistant");
+        assert!(value["assistant_message"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("模拟"));
+        assert_eq!(value["meta"]["simulated"], true);
+        assert_eq!(value["meta"]["network_used"], false);
+        assert_eq!(value["meta"]["tool_executions"], 0);
+        assert_eq!(value["title"], "请给出 AmeR 定向进化的下一步建议");
+
+        // 会话详情：两条消息，顺序正确。
+        let detail_uri = format!("/api/conversations/{conversation_id}");
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, &detail_uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["subject_name"], "AmeR 定向进化");
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+
+        // 会话列表：含消息数与课题名。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/conversations", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let list = value.as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["message_count"], 2);
+        assert_eq!(list[0]["subject_name"], "AmeR 定向进化");
+
+        // 用量摘要：对话 1 / 消息 2 / 运行 1 / 课题 1。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/workspace/summary", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["subjects"], 1);
+        assert_eq!(value["conversations"], 1);
+        assert_eq!(value["messages"], 2);
+        assert_eq!(value["runs"], 1);
+        assert_eq!(value["documents"], 0);
+
+        // 删除会话级联删除消息。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::DELETE, &detail_uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, &detail_uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversations_are_isolated_and_validated() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let bob = register(&test.app, "bob@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "AmeR 定向进化").await;
+        let conversation_id = create_conversation(&test.app, &alice, subject_id).await;
+
+        // Bob 不能读取 Alice 的会话。
+        let uri = format!("/api/conversations/{conversation_id}");
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, &uri, Some(&bob), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Bob 不能向 Alice 的会话发消息。
+        let message_uri = format!("/api/conversations/{conversation_id}/messages");
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &message_uri, Some(&bob), json!({ "content": "越权" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // 也不能为 Alice 的课题创建会话。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/conversations",
+                Some(&bob),
+                json!({ "subject_id": subject_id }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // 空消息 400。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &message_uri, Some(&alice), json!({ "content": "   " })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 超长消息 400。
+        let long = "字".repeat(4001);
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &message_uri, Some(&alice), json!({ "content": long })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 非法 mode 400。
+        let (status, _) = send(
+            &test.app,
+            json_req(
+                Method::POST,
+                "/api/conversations",
+                Some(&alice),
+                json!({ "subject_id": subject_id, "mode": "turbo" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 未认证 401。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::GET, "/api/conversations", None, Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn tool_catalog_and_subject_association() {
+        let test = TestApp::new().await;
+        let alice = register(&test.app, "alice@example.com", "password123").await;
+        let bob = register(&test.app, "bob@example.com", "password123").await;
+        let subject_id = create_subject(&test.app, &alice, "工具课题").await;
+
+        // 目录只读且可筛选。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/tools", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let total = value["total"].as_i64().unwrap();
+        assert!(total >= 10);
+        assert!(value["items"].as_array().unwrap().iter().all(|item| item["simulated"] == true));
+
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/tools?kind=skill", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["kind"] == "skill"));
+
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, "/api/tools?q=对接", Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["total"], 1);
+
+        // 关联工具（幂等）。
+        let uri = format!("/api/subjects/{subject_id}/tools");
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::POST, &uri, Some(&alice), json!({ "tool_id": "skill-structure-fold" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "关联工具失败：{value}");
+        assert_eq!(value["tool_id"], "skill-structure-fold");
+
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &uri, Some(&alice), json!({ "tool_id": "skill-structure-fold" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // 列表包含关联项。
+        let (status, value) = send(
+            &test.app,
+            json_req(Method::GET, &uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value.as_array().unwrap().len(), 1);
+
+        // 未知工具 400。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &uri, Some(&alice), json!({ "tool_id": "no-such-tool" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Bob 不能在 Alice 的课题上关联工具。
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::POST, &uri, Some(&bob), json!({ "tool_id": "skill-structure-fold" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // 解除关联。
+        let remove_uri = format!("/api/subjects/{subject_id}/tools/skill-structure-fold");
+        let (status, _) = send(
+            &test.app,
+            json_req(Method::DELETE, &remove_uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, value) = send(
+            &test.app,
+            json_req(Method::GET, &uri, Some(&alice), Value::Null),
+        )
+        .await;
+        assert!(value.as_array().unwrap().is_empty());
     }
 }

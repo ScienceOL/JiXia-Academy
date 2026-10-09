@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
+    "dev": "vite --host 127.0.0.1 --port 5175",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "react-router-dom": "^7.18.4",
     "tailwind-merge": "^3.7.0",
     "zustand": "^5.0.15"
   },
