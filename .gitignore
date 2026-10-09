@@ -4,3 +4,4 @@ frontend/dist/
 data/
 .runtime/
 *.log
+tools/docs/demo-state.json
