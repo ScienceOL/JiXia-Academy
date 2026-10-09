@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Fieldnote Research Studio 功能展示验收</title>
+<style>
+  body { color: #1f2933; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+
+  /* ---------- 封面 ---------- */
+  .cover { text-align: center; padding-top: 26mm; }
+  .cover-kicker { font-size: 10.5pt; letter-spacing: 0.28em; color: #6b7d72; text-transform: uppercase; }
+  .cover-title { font-size: 36pt; border: none !important; margin: 14mm 0 4mm; letter-spacing: 0.06em; color: #24352d; }
+  .cover-sub { font-size: 15pt; color: #3f5749; letter-spacing: 0.12em; }
+  .cover-rule { width: 46mm; height: 3px; background: #35594a; margin: 8mm auto 12mm; border-radius: 2px; }
+  .meta-table { width: 152mm; margin: 0 auto 12mm; border-collapse: collapse; font-size: 11pt; }
+  .meta-table td { border: none !important; padding: 5px 10px; vertical-align: top; }
+  .meta-table td.k { width: 30mm; color: #6b7d72; white-space: nowrap; }
+  .boundary { width: 152mm; margin: 0 auto; text-align: left; border: 1px solid #cdd8d1; border-left: 4px solid #35594a;
+    border-radius: 6px; background: #f4f7f4; padding: 10px 14px; font-size: 10.5pt; color: #3f5749; }
+  .boundary h4 { margin: 0 0 6px; font-size: 11pt; color: #24352d; }
+
+  /* ---------- 目录 ---------- */
+  .toc-title { border: none !important; font-size: 24pt; color: #24352d; margin: 0 0 2mm; }
+  .toc-sub { color: #6b7d72; font-size: 10.5pt; margin-bottom: 8mm; }
+  .toc-list { list-style: none; padding-left: 0; font-size: 12pt; }
+  .toc-list li { display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1px dotted #cdd8d1; padding: 7px 2px; }
+  .toc-list li .t { color: #1f2933; }
+  .toc-list li .r { color: #6b7d72; font-size: 10.5pt; white-space: nowrap; padding-left: 10px; }
+
+  /* ---------- 正文 ---------- */
+  h1 { color: #24352d; margin-top: 26px; }
+  h2 { color: #35594a; margin-top: 18px; }
+  .lead { color: #52606d; }
+  .note { background: #f4f7f4; border-left: 4px solid #35594a; border-radius: 4px;
+    padding: 8px 12px; margin: 10px 0; color: #3f5749; font-size: 10.5pt; }
+  .note b { color: #24352d; }
+
+  /* ---------- 配图 ---------- */
+  figure.shot { margin: 16px 0 20px; }
+  figure.shot img { display: block; margin: 0 auto; max-width: 100%; max-height: 200mm; height: auto;
+    border: 1px solid #d0d7de; border-radius: 6px; }
+  figure.shot figcaption { margin-top: 7px; font-size: 10pt; color: #52606d; text-align: center; }
+  .mobile-strip { display: flex; align-items: flex-start; justify-content: center; gap: 14px;
+    margin: 16px 0 6px; page-break-inside: avoid; }
+  .mobile-strip figure.shot { flex: 0 1 auto; margin: 0; min-width: 0; }
+  .mobile-strip figure.shot img { height: 148mm; width: auto; max-width: 100%; max-height: none; }
+  .mobile-strip figure.shot figcaption { font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<!-- ==================== 封面 ==================== -->
+<div class="cover" style="page-break-after: always;">
+  <div class="cover-kicker">Fieldnote Research Studio · 本地优先科研工作台</div>
+  <h1 class="cover-title">功能展示验收</h1>
+  <div class="cover-sub">Fieldnote Research Studio</div>
+  <div class="cover-rule"></div>
+
+  <table class="meta-table">
+    <tr><td class="k">报告版本</td><td>v1.0</td></tr>
+    <tr><td class="k">日期</td><td>2026-10-01</td></tr>
+    <tr><td class="k">实施目录</td><td>E:\isaac_sim\elite_robot_arm_0922\vla_launch\.tmp_jixiaxueshe_worktree</td></tr>
+    <tr><td class="k">运行环境</td><td>前端 <code>127.0.0.1:5175</code>、后端 <code>127.0.0.1:8081</code>（前后端均仅绑定回环地址，无 <code>0.0.0.0</code>）</td></tr>
+    <tr><td class="k">验收范围</td><td>阶段 A–E 已完成的本地单机功能与界面展示</td></tr>
+  </table>
+
+  <div class="boundary">
+    <h4>模拟边界声明</h4>
+    <p>本报告所有截图均为在本地 <code>127.0.0.1</code> 环境实测采集，不访问外部网络、不连接模型服务 / 科研数据库 / 计算集群 / 实验设备或机器人硬件。对话回复来自 A3S 会话 + 本地固定响应（fixture）模型，<b>不是 AI 推理结果</b>；工具目录与案例材料均为本地模拟演示数据，<b>不构成科研结论</b>。</p>
+  </div>
+</div>
+
+<!-- ==================== 目录 ==================== -->
+<div class="toc" style="page-break-after: always;">
+  <h1 class="toc-title">目录</h1>
+  <div class="toc-sub">Fieldnote Research Studio · 功能展示验收 · v1.0 · 2026-10-01</div>
+  <ol class="toc-list">
+    <li><span class="t">1. 项目概述</span><span class="r">技术栈与阶段 A–E 范围</span></li>
+    <li><span class="t">2. 运行环境与安全边界</span><span class="r">图 2-1 ～ 图 2-3</span></li>
+    <li><span class="t">3. 阶段 A 案例工作流</span><span class="r">图 3-1</span></li>
+    <li><span class="t">4. 阶段 B 研究资料</span><span class="r">图 4-1</span></li>
+    <li><span class="t">5. 阶段 C 课题空间与知识库</span><span class="r">图 5-1 ～ 图 5-3</span></li>
+    <li><span class="t">6. 阶段 E 对话与课题空间闭环</span><span class="r">图 6-1 ～ 图 6-3</span></li>
+    <li><span class="t">7. 窄屏适配</span><span class="r">图 7-1 ～ 图 7-3</span></li>
+    <li><span class="t">8. 后端与 A3S 证据</span><span class="r">图 8-1</span></li>
+    <li><span class="t">9. 模拟与未实现清单</span><span class="r">边界声明</span></li>
+    <li><span class="t">10. 需授权事项（已停止，未执行）</span><span class="r">—</span></li>
+  </ol>
+</div>
+
+<!-- ==================== 1 ==================== -->
+<h1>1. 项目概述</h1>
+
+<p class="lead">本项目以「本地优先（local-first）」为原则复刻一套科研工作台 <b>Fieldnote Research Studio</b>：全部功能在本机回环地址上运行，不访问外部网络，不连接模型服务、科研数据库、计算集群、实验设备或机器人硬件。运行产生的截图与日志均来自本地实测。</p>
+
+<h2>1.1 复刻目标</h2>
+<ul>
+  <li>在本机 <code>127.0.0.1</code> 上提供一套可交互的科研工作台界面，覆盖案例工作流、研究资料、课题空间与对话四条主线。</li>
+  <li>提供可持久化、可迁移、带最小认证与资源归属隔离的本地后端（SQLite 为事实来源）。</li>
+  <li>接入 A3S Code Core 会话，验证宿主模型接口可在<b>无凭证、无外网</b>条件下运行，并明确标注模拟边界。</li>
+</ul>
+
+<h2>1.2 技术栈</h2>
+<table>
+  <tr><th>层次</th><th>技术选型</th></tr>
+  <tr><td>前端</td><td>React 19.2.7 + TypeScript 5.9.3 + Vite 7.3.5 + Tailwind CSS 4.3.3；shadcn/ui 风格组件（Radix UI + class-variance-authority / clsx / tailwind-merge）；Zustand 5；react-router-dom 7</td></tr>
+  <tr><td>后端</td><td>Rust（edition 2021）+ Axum 0.8 + SQLite（rusqlite，bundled）+ Argon2id 口令哈希</td></tr>
+  <tr><td>A3S</td><td><code>a3s-code-core 9.1.1</code>（minimal 特性）</td></tr>
+</table>
+
+<h2>1.3 阶段 A–E 已完成范围</h2>
+<table>
+  <tr><th>阶段</th><th>已完成范围</th></tr>
+  <tr><td>A 案例工作流</td><td>AmeR 蛋白质定向进化八阶段可导航演示；进度本地保存 / 推进 / 重置；A3S 会话接入本地固定响应（fixture）并回显运行时事件。</td></tr>
+  <tr><td>B 研究资料</td><td>「论文工具」三页签：文献检索、PDF 精读、引文核验；纯前端模拟流程。</td></tr>
+  <tr><td>C 产品基础设施</td><td>后端由单文件收敛为模块化结构；SQLite 迁移 <code>001_initial</code>；认证、资源归属隔离、上传边界、备份、结构化 JSON 日志。</td></tr>
+  <tr><td>E 核心闭环</td><td>迁移 <code>002_conversation_loop</code>；会话 CRUD；发消息落库 + 本地模板回复 + 写 <code>runs</code> / <code>evidence</code>；只读工具目录与课题工具关联。</td></tr>
+</table>
+
+<!-- ==================== 2 ==================== -->
+<h1>2. 运行环境与安全边界</h1>
+
+<p class="lead">前后端一律只绑定回环地址，远程访问只走 SSH 隧道；认证与资源访问均设有明确的本地安全策略。</p>
+
+<ul>
+  <li><b>绑定</b>：后端仅监听 <code>127.0.0.1:8081</code>，前端 <code>127.0.0.1:5175</code>，均无 <code>0.0.0.0</code> 暴露。</li>
+  <li><b>口令</b>：Argon2id + 每用户随机盐；登录失败信息不区分「邮箱不存在 / 口令错误」，审计记为 <code>bad_password</code>。</li>
+  <li><b>会话令牌</b>：32 字节 CSPRNG 随机令牌，服务端<b>仅存 SHA-256 摘要</b>；支持过期与注销（退出即吊销）。</li>
+  <li><b>资源归属</b>：资源访问先校验 <code>owner_id == 当前用户</code>，<b>越权一律返回 404</b>（不泄露资源是否存在）。</li>
+  <li><b>上传边界</b>：扩展名白名单 <code>pdf / txt / md / csv / json</code>；单文件上限 20 MiB（超限 413）；原始文件名仅作展示，落盘使用服务端随机名并按课题分目录。</li>
+  <li><b>无外网调用</b>：示例回复与工具目录均为本地模拟，界面内显式标注。</li>
+</ul>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-login.png" alt="未登录态访问首页时的登录/注册门">
+  <figcaption>图 2-1 未登录态访问首页时弹出的登录 / 注册门（认证门）。（访问路径：/ ）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/state-auth-register.png" alt="认证门切换到注册页签">
+  <figcaption>图 2-2 认证门切换到「注册」页签：提示“在本机创建账号；数据只保存在 127.0.0.1 的本地数据库”。（访问路径：/ ，认证门 · 注册页签）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/state-auth-error.png" alt="认证操作失败时的内联错误提示">
+  <figcaption>图 2-3 认证操作失败态：表单内联显示红色错误提示“登录状态已失效，请重新登录。”。（访问路径：/ ，认证门 · 错误态）</figcaption>
+</figure>
+
+<!-- ==================== 3 ==================== -->
+<h1>3. 阶段 A 案例工作流</h1>
+
+<p class="lead">案例工作流以 «AmeR 蛋白质定向进化» 为演示案例，包含八个可导航的研究阶段，进度与事件可本地保存、推进、刷新恢复与重置。</p>
+
+<ul>
+  <li><b>八阶段</b>：01 定义科学问题 → 02 深入研究 → 03 专家选择路线 → 04 风险评估 → 05 分子动力学模拟 → 06 可信性证据链 → 07 湿实验验证与监测 → 08 结果回流与迭代。</li>
+  <li><b>进度操作</b>：可保存进度、推进到下一阶段、一键重置；进度与事件写入本地持久化存储，刷新后可恢复。</li>
+  <li><b>A3S 会话接入</b>：后端锁定 <code>a3s-code-core = 9.1.1</code>，经宿主模型接口注入<b>本地固定响应 fixture</b>，页面显示运行时事件（如 <code>text_delta</code>、<code>agent_end</code>）与模型调用计数。</li>
+</ul>
+
+<div class="note"><b>边界：</b>该固定响应用来证明 A3S 会话及宿主模型接口可在无凭证条件下工作，<b>不是 AI 推理</b>；案例材料为本地模拟演示数据，不代表经核验的科研结论。</div>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-case.png" alt="AmeR 蛋白质定向进化案例工作流">
+  <figcaption>图 3-1 AmeR 蛋白质定向进化八阶段案例工作流：研究路径、阶段产物流水线、A3S 本地模型链路（A3S Code Core 9.1.1、本地 fixture · 无外网、默认只读）与模拟动力学曲线。（访问路径：/ ）</figcaption>
+</figure>
+
+<!-- ==================== 4 ==================== -->
+<h1>4. 阶段 B 研究资料</h1>
+
+<p class="lead">「研究资料 / 论文工具」工作区提供三个可导航页签：文献检索、PDF 精读与引文核验；本阶段为前端模拟流程，不是正式文献产品。</p>
+
+<ul>
+  <li><b>文献检索</b>：支持关键词、年份与条目类型过滤，可展开摘要详情，并具备加载 / 空结果 / 输入错误状态；索引内仅有 <b>4 条虚构条目</b>。</li>
+  <li><b>PDF 精读</b>：本地文件限制为 <code>.pdf</code>、非空、MIME 允许值、文件头 <code>%PDF-</code> 且不超过 20 MiB；<b>仅校验元信息与开头 5 字节，不上传、不解析正文、不持久化文件</b>。</li>
+  <li><b>引文核验</b>：判定使用<b>本地字面规则</b>——存在性只匹配本地演示 ID 或完整题名；观点一致性只计算来源文本与观点间的字面词项重合比例，并附判断、依据与不确定性说明。</li>
+</ul>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-paper.png" alt="研究资料论文工具三页签">
+  <figcaption>图 4-1 「论文工具」三页签（文献检索 / PDF 精读 / 引文核验）及检索交互样例：顶部标注“演示模式 · 不连接学术数据库 · 不构成文献事实核验”，右侧 SCOPE NOTE 提示“这是检索交互样例，不是文献服务”。（访问路径：/paper ）</figcaption>
+</figure>
+
+<!-- ==================== 5 ==================== -->
+<h1>5. 阶段 C 课题空间与知识库</h1>
+
+<p class="lead">阶段 C 将后端由单文件演示结构收敛为模块化架构，并补齐本地单机可持久化、可迁移、可备份、带最小认证与资源归属的基础设施。</p>
+
+<h2>5.1 模块化后端</h2>
+<p>后端按职责拆分为 <code>config</code> / <code>error</code> / <code>logging</code> / <code>util</code> / <code>models</code> / <code>db</code> / <code>auth</code> / <code>storage</code> / <code>state</code> / <code>case</code> / <code>agent</code> 等模块，并以 <code>routes/</code> 目录承载 <code>auth</code>、<code>subjects</code>、<code>case</code>、<code>agent</code>、<code>admin</code> 等路由。</p>
+
+<h2>5.2 迁移与数据模型</h2>
+<ul>
+  <li>SQLite 为事实来源，启用 <code>PRAGMA foreign_keys = ON</code> 与 WAL 日志模式；时间戳统一为 Unix 秒。</li>
+  <li>首版迁移 <code>001_initial</code> 建立 <code>users</code>、<code>sessions</code>、<code>subjects</code>、<code>documents</code>、<code>conversations</code>、<code>messages</code>、<code>runs</code>、<code>evidence</code>、<code>audit_events</code> 等表，并以 <code>PRAGMA user_version</code> 记录已应用版本（幂等、事务内执行）。</li>
+</ul>
+
+<h2>5.3 安全与边界</h2>
+<ul>
+  <li><b>认证</b>：除 <code>/api/health</code>、<code>/api/auth/register</code>、<code>/api/auth/login</code> 外，其余接口需 <code>Authorization: Bearer &lt;token&gt;</code>；无令牌 401。</li>
+  <li><b>资源隔离</b>：课题 / 文档等资源按所有者隔离，越权访问返回 404。</li>
+  <li><b>上传边界</b>：白名单扩展名、文件名校验、随机落盘名、课题分目录，入库记录 SHA-256。</li>
+  <li><b>备份</b>：<code>POST /api/admin/backup</code> 使用 <code>VACUUM INTO</code> 生成一致性快照，返回相对路径与 SHA-256。</li>
+  <li><b>结构化日志</b>：单行 JSON（<code>ts / level / event / msg / fields</code>）输出到 stderr 并追加到 <code>&lt;data&gt;/logs/app.log</code>；注册、登录成败、课题增删改、文档上传 / 删除、备份均写入审计并落日志。</li>
+</ul>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-repository.png" alt="课题空间用量摘要与课题列表">
+  <figcaption>图 5-1 课题空间（<code>/repo/repository</code>）：「用量摘要」卡片显示课题 1 / 知识库文件 1 / 会话 1 / 消息 8 / 运行记录 23 / 占用存储 374 B，下方为课题卡片列表。（访问路径：/repo/repository ）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-subject-detail.png" alt="课题详情页：知识库、工具目录与课题内对话">
+  <figcaption>图 5-2 课题详情：知识库文件（含类型 / 大小 / SHA-256 前 8 位 / 时间，支持上传 · 下载 · 删除）、推荐工具目录（只读，标注模拟）、已关联工具与课题内对话。（访问路径：/repo/repository/1 ）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/state-subject-tools.png" alt="课题详情推荐工具目录交互态">
+  <figcaption>图 5-3 课题详情中「推荐工具目录」的交互态：搜索、按学科 / 用途 / 名称筛选，工具行带「模拟」标记与「添加到课题」按钮，分页显示 1 / 2；右侧为课题内对话面板。（访问路径：/repo/repository/1 ，工具目录交互态）</figcaption>
+</figure>
+
+<!-- ==================== 6 ==================== -->
+<h1>6. 阶段 E 对话与课题空间闭环</h1>
+
+<p class="lead">阶段 E 打通「登录 → 建课题 → 上传文件 → 工具关联 → 课题内对话 → 发消息 → 历史与失败态」的核心闭环。</p>
+
+<h2>6.1 迁移 002 与接口</h2>
+<ul>
+  <li>新增迁移 <code>002_conversation_loop</code>，只做追加列与新增表：为 <code>conversations</code> 追加 <code>updated_at</code>、<code>mode</code>（quick / deep）、<code>model</code>（选择器占位值），并新增 <code>subject_tools</code> 关联表。</li>
+  <li>会话 <b>CRUD</b>：<code>GET/POST /api/conversations</code>、<code>GET/DELETE /api/conversations/{id}</code>；对话必须归属课题，删除级联。</li>
+  <li><b>发消息落库</b>：<code>POST /api/conversations/{id}/messages</code> 先落库用户消息 → 生成本地模板回复 → 落库助手消息 → 写入 <code>runs</code>（<code>a3s.chat</code>）与 <code>evidence</code>。</li>
+  <li><b>工具目录</b>：<code>GET /api/tools</code> 返回只读本地模拟目录，共 <b>12 条</b>（<code>skill</code> 4 类 + <code>scp</code> 8 类），支持 <code>kind/q/field/purpose/sort</code> 过滤。</li>
+  <li><b>课题工具关联</b>：<code>GET/POST/DELETE /api/subjects/{id}/tools[/{tool_id}]</code>，关联幂等。</li>
+</ul>
+
+<h2>6.2 回复生成（本地模拟）</h2>
+<p>回复复用 A3S 会话：<code>Agent::new(ACL)</code> → 受限 <code>SessionOptions</code>（默认拒绝工具）→ 注入 <b>fixture LLM 客户端</b>。该客户端为提示词感知的本地模板，输出固定免责声明 + 课题 / 模式 / 知识库附件上下文 + 截断回显用户问题 + 建议路径，并以「本轮未使用网络、未执行任何工具；这是一条模拟回复。」收尾。元数据（运行时、版本、fixture 调用次数、事件名）随助手消息返回，前端展示为「A3S 模拟回复」标签与运行时元数据。</p>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-chat-home.png" alt="对话首页">
+  <figcaption>图 6-1 对话首页（<code>/chat</code>）：左侧会话历史、课题选择器、快速 / 深度切换、模式选择器「Auto · 自动（占位）」、附件菜单「暂不可用」、示例问题（只填入不发送）。（访问路径：/chat ）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/desktop-chat-detail.png" alt="会话详情：消息气泡与模拟回复标签">
+  <figcaption>图 6-2 会话视图（<code>/chat/:id</code>，本次演示会话）：会话历史列表、用户 / 助手消息气泡；助手消息带「A3S 模拟回复」标签、固定免责声明与运行时元数据（时间、入库状态）。（访问路径：/chat/:id ）</figcaption>
+</figure>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/state-chat-error.png" alt="对话失败态与重试提示">
+  <figcaption>图 6-3 对话失败态：页面顶部显示错误提示「Failed to fetch」，助手气泡保留可重试的失败反馈。（访问路径：/chat/:id ，失败态）</figcaption>
+</figure>
+
+<!-- ==================== 7 ==================== -->
+<h1>7. 窄屏适配</h1>
+
+<p class="lead">在 390 × 844 的窄屏视口下对三个主要页面进行了适配验收：页面<b>无横向溢出</b>（<code>document.scrollWidth ≤ window.innerWidth</code>），工具行高度正常（修复后 6 行 <code>.tool-row</code> 行高均为 99px）。</p>
+
+<div class="mobile-strip">
+  <figure class="shot">
+    <img src="../../deliverables/screenshots/mobile-chat-detail.png" alt="窄屏会话详情">
+    <figcaption>图 7-1 窄屏会话详情。（/chat/:id ，视口 390×844）</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../../deliverables/screenshots/mobile-repository.png" alt="窄屏课题空间">
+    <figcaption>图 7-2 窄屏课题空间：用量摘要改双列卡片。（/repo/repository ，视口 390×844）</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../../deliverables/screenshots/mobile-subject-detail.png" alt="窄屏课题详情">
+    <figcaption>图 7-3 窄屏课题详情：知识库 / 工具目录 / 已关联工具 / 课题内对话单列堆叠。（/repo/repository/1 ，视口 390×844）</figcaption>
+  </figure>
+</div>
+
+<!-- ==================== 8 ==================== -->
+<h1>8. 后端与 A3S 证据</h1>
+
+<p class="lead">以下数据为 <b>2026/10/1 13:19:08</b> 在 <code>http://127.0.0.1:8081</code> 本地离线采集的真实响应与启动日志（本地 / 离线 / 无外网调用）。</p>
+
+<ul>
+  <li><b><code>GET /api/health</code></b>：<code>{ "data": "simulated", "product": "Fieldnote Research Studio", "status": "ok" }</code>。</li>
+  <li><b><code>GET /api/tools</code></b>：<code>total = 12</code>，全部条目 <code>simulated: true</code>（<code>scp</code> 系 8 条 + <code>skill</code> 系 4 条）。</li>
+  <li><b><code>GET /api/workspace/summary</code></b>：<code>{ "subjects": 1, "documents": 1, "conversations": 1, "messages": 8, "runs": 23, "storage_bytes": 374 }</code>。</li>
+  <li><b>启动日志</b>：<code>{"event":"migration.applied","fields":{"applied":2,"schema_version":2},...}</code> 与 <code>{"event":"server.started","fields":{"address":"127.0.0.1:8081"},...}</code>，并输出 <code>Fieldnote API listening at http://127.0.0.1:8081</code>。</li>
+</ul>
+
+<figure class="shot">
+  <img src="../../deliverables/screenshots/evidence-backend-a3s.png" alt="后端与 A3S 运行证据页">
+  <figcaption>图 8-1 后端与 A3S 运行证据页（本机 127.0.0.1）：<code>GET /api/health</code> 与 <code>GET /api/workspace/summary</code> 原始 JSON、<code>GET /api/tools</code> 摘要（total = 12，全部 simulated）、以及后端启动 / 迁移日志摘录。（数据来源：http://127.0.0.1:8081 ，离线采集）</figcaption>
+</figure>
+
+<!-- ==================== 9 ==================== -->
+<h1>9. 模拟与未实现清单</h1>
+
+<h2>9.1 模拟项（本地模拟，非真实能力）</h2>
+<ul>
+  <li><code>/api/health</code> 标注 <code>"data": "simulated"</code>。</li>
+  <li>对话回复来自 <b>A3S 会话 + fixture LLM 客户端</b>（本地固定响应模型），非 AI 推理。</li>
+  <li>工具目录为本地静态自造清单，共 <b>12 条</b>，全部 <code>simulated: true</code>。</li>
+</ul>
+
+<h2>9.2 占位项</h2>
+<ul>
+  <li>模型选择器（<code>Auto · 自动（占位）</code>）：仅记录，不改变回复来源。</li>
+  <li>附件菜单：禁用 + 说明。</li>
+  <li>「上传文件夹」：浏览器端限制说明（占位）。</li>
+  <li>研究总览、工具与方法导航：占位（后续阶段）。</li>
+</ul>
+
+<h2>9.3 未实现项（留待后续阶段 / 需授权）</h2>
+<ul>
+  <li>真实模型提供方与密钥。</li>
+  <li>工具的真实执行。</li>
+  <li>外网上传 / PDF 正文解析（本阶段仅校验元信息与文件头）。</li>
+  <li>阶段 F / G / H（论文工具进阶与目录类模块、应用 / 计算 / 模型、帮助与账号）。</li>
+  <li>内测部署（阶段 I）。</li>
+  <li>公网发布（阶段 J）。</li>
+</ul>
+
+<!-- ==================== 10 ==================== -->
+<h1>10. 需授权事项（已停止，未执行）</h1>
+
+<p class="lead">以下事项均<b>未执行</b>，需用户明确授权后再单独立项。</p>
+
+<ul>
+  <li><b>阶段 D</b>：接入真实模型提供方、托管密钥，可能产生费用。</li>
+  <li><b>阶段 I</b>：内测 / 容器部署（非实验室环境）。</li>
+  <li><b>阶段 J</b>：公网发布、域名 / TLS、身份体系与费用。</li>
+  <li><b>实验室服务器与真机 / Omega 主手</b>：任何连接或控制操作。</li>
+</ul>
+
+</body>
+</html>
